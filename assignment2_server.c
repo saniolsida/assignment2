@@ -11,17 +11,25 @@
 
 void error_handling(char *message);
 
+typedef struct
+{
+    int seq;
+    int datalen;
+    char buf[BUF_SIZE];
+} packet_t;
+
 int main(int argc, char *argv[])
 {
     int serv_sock;
-    int total_bytes = 0;
+    int total_bytes = 0, file_bytes = 0;
     char message[BUF_SIZE];
-    int str_len;
+    char file_name[FILE_SIZE];
+    int str_len, receive = 0;
     socklen_t clnt_adr_sz;
     struct sockaddr_in serv_adr, clnt_adr;
+    packet_t packet;
     FILE *fp;
     clock_t start, end;
-    // struct timeval timeout;
     if (argc != 2)
     {
         printf("Usage : %s <port>\n", argv[0]);
@@ -42,68 +50,51 @@ int main(int argc, char *argv[])
     {
         clnt_adr_sz = sizeof(clnt_adr);
         total_bytes = 0;
-        while (1)
+
+        str_len = recvfrom(serv_sock, message, BUF_SIZE, 0,
+                           (struct sockaddr *)&clnt_adr, &clnt_adr_sz); // 파일이름과 전체 사이즈
+
+        char *ptr = strtok(message, " ");
+        strcpy(file_name, ptr);
+        ptr = strtok(NULL, " ");
+        file_bytes = atoi(ptr);
+
+        printf("파일 이름과 사이즈: %s %d\n", file_name, file_bytes);
+        fp = fopen(file_name, "wb");
+        if (!fp)
+            error_handling("fopen() failed");
+
+        int i = 0;
+
+        while (file_bytes > 0)
         {
-            str_len = recvfrom(serv_sock, message, BUF_SIZE, 0,
-                               (struct sockaddr *)&clnt_adr, &clnt_adr_sz);
-            message[str_len] = '\0';
+            // 구조체 받고 ack 전송
+            str_len = recvfrom(serv_sock, (char *)&packet, sizeof(packet_t), 0,
+                               (struct sockaddr *)&clnt_adr, &clnt_adr_sz); // 파일이름과 전체 사이즈
 
-            if (strncmp(message, "[FILE]", 6) == 0)
+            printf("ACK %d\n", packet.seq);
+
+            if (packet.seq % 3 == 0 && packet.seq != 0 && i < 5)
             {
-                char file_name[FILE_SIZE];
-                char *name = message + 6;
-                char *end = strstr(name, "[END]");
-
-                if (end)
-                    *end = '\0';
-
-                snprintf(file_name, sizeof(file_name), "%s", name);
-                fp = fopen(file_name, "wb");
-                if (!fp)
-                    error_handling("fopen() failed");
-                else
-                    printf("file open: %s\n", file_name);
-
-                sendto(serv_sock, file_name, str_len, 0,
-                       (struct sockaddr *)&clnt_adr, clnt_adr_sz);
-
-                memset(&message,0,sizeof(message));
-                start = clock();
-            }
-            else if (fp && (strncmp(message, "[EOF]", 5) != 0) && (strncmp(message, "[PKT]", 5) != 0))
-            {
-                total_bytes += str_len;
-
-                fwrite((void *)message, 1, str_len, fp);
-            }
-            else if(strncmp(message, "[EOF]", 5) == 0)
-            {
-                end = clock();
-                printf("Thoughput: %.1lf\n",(total_bytes / ((double)(end - start)/CLOCKS_PER_SEC)));
-                fclose(fp);
-                break;
-            }
-            else if(strncmp(message, "[PKT]", 5) == 0)
-            {
-                printf("%s\n",message);
-                char seq[FILE_SIZE];
-                char *tmp_seq = message + 5;
-                char *end = strstr(tmp_seq, "[SEQ]");
-
-                if (end)
-                    *end = '\0';
-
-                snprintf(seq, sizeof(seq), "%s", tmp_seq);
                 
-                str_len = snprintf(message, BUF_SIZE, "[ACK] seq: %s",seq);
-                // printf("%s\n",message);
+            }
+            else
+            {
+                fwrite((void *)packet.buf, 1, packet.datalen, fp);
 
-                sendto(serv_sock, message, str_len, 0,
+                char ack[10];
+                str_len = snprintf(ack, 10, "%d", packet.seq);
+
+                sendto(serv_sock, ack, str_len, 0,
                        (struct sockaddr *)&clnt_adr, clnt_adr_sz);
 
-                memset(&message,0,sizeof(message)); 
+                file_bytes -= packet.datalen;
             }
+
+            i++;
         }
+
+        fclose(fp);
     }
 
     close(serv_sock);
