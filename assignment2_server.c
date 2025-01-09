@@ -65,6 +65,7 @@ int main(int argc, char *argv[])
             error_handling("fopen() failed");
 
         int i = 0;
+        int past_seq = -1;
 
         while (file_bytes > 0)
         {
@@ -74,11 +75,11 @@ int main(int argc, char *argv[])
 
             printf("ACK %d\n", packet.seq);
 
-            if (packet.seq % 3 == 0 && packet.seq != 0 && i < 5)
+            if (packet.seq == 3 && packet.seq != 0 && i < 5)
             {
                 
             }
-            else
+            else if(past_seq + 1 == packet.seq)
             {
                 fwrite((void *)packet.buf, 1, packet.datalen, fp);
 
@@ -87,7 +88,8 @@ int main(int argc, char *argv[])
 
                 sendto(serv_sock, ack, str_len, 0,
                        (struct sockaddr *)&clnt_adr, clnt_adr_sz);
-
+                past_seq = packet.seq;
+                
                 file_bytes -= packet.datalen;
             }
 
